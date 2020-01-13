@@ -58,23 +58,6 @@ class RedisSessionStore < ActionDispatch::Session::AbstractStore
 
   attr_reader :redis, :key, :default_options, :serializer
 
-  # overrides method defined in rack to actually verify session existence
-  # Prevents needless new sessions from being created in scenario where
-  # user HAS session id, but it already expired, or is invalid for some
-  # other reason, and session was accessed only for reading.
-  def session_exists?(env)
-    value = current_session_id(env)
-
-    !!(
-      value && !value.empty? &&
-      redis.exists(prefixed(value))
-    )
-  rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
-    on_redis_down.call(e, env, value) if on_redis_down
-
-    true
-  end
-
   def verify_handlers!
     %w(on_redis_down on_session_load_error).each do |h|
       next unless (handler = public_send(h)) && !handler.respond_to?(:call)
@@ -102,7 +85,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractStore
   def load_session_from_redis(sid)
     data = redis.get(prefixed(sid))
     begin
-      data ? decode(data) : nil
+      data ? decode(data) : (USE_INDIFFERENT_ACCESS ? {}.with_indifferent_access : {})
     rescue StandardError => e
       destroy_session_from_sid(sid, drop: true)
       on_session_load_error.call(e, sid) if on_session_load_error
@@ -116,6 +99,10 @@ class RedisSessionStore < ActionDispatch::Session::AbstractStore
   end
 
   def set_session(env, sid, session_data, options = nil)
+    if session_data.blank?
+      redis.del(prefixed(sid)) if redis.exists(prefixed(sid))
+      return sid
+    end
     expiry = get_expiry(env, options)
     if expiry
       redis.setex(prefixed(sid), expiry, encode(session_data))
