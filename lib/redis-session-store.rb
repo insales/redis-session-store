@@ -70,12 +70,12 @@ class RedisSessionStore < ActionDispatch::Session::AbstractStore
     "#{default_options[:key_prefix]}#{sid}"
   end
 
-  def session_default_values
-    [generate_sid, USE_INDIFFERENT_ACCESS ? {}.with_indifferent_access : {}]
+  def session_default_values(existing_sid = nil)
+    [existing_sid || generate_sid, USE_INDIFFERENT_ACCESS ? {}.with_indifferent_access : {}]
   end
 
   def get_session(env, sid)
-    sid && (session = load_session_from_redis(sid)) ? [sid, session] : session_default_values
+    sid && (session = load_session_from_redis(sid)) ? [sid, session] : session_default_values(sid)
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
     on_redis_down.call(e, env, sid) if on_redis_down
     session_default_values
