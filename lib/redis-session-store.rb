@@ -58,6 +58,13 @@ class RedisSessionStore < ActionDispatch::Session::AbstractStore
 
   attr_reader :redis, :key, :default_options, :serializer
 
+  # method is identical to Rack::Session::Abstract::Persisted, left here for tests to pass
+  # may return true even when session is not present in redis, this is to prevent 2 read requests (exists+load) in rails
+  def session_exists?(req)
+    value = current_session_id(req)
+    value && !value.empty?
+  end
+
   def verify_handlers!
     %w(on_redis_down on_session_load_error).each do |h|
       next unless (handler = public_send(h)) && !handler.respond_to?(:call)
@@ -99,8 +106,8 @@ class RedisSessionStore < ActionDispatch::Session::AbstractStore
   end
 
   def set_session(env, sid, session_data, options = nil)
-    if session_data.blank?
-      redis.del(prefixed(sid)) if redis.exists(prefixed(sid))
+    if session_data.empty?
+      redis.del(prefixed(sid)) # redis ignores del if key does not exist
       return sid
     end
     expiry = get_expiry(env, options)

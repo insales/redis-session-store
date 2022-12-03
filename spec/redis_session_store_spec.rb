@@ -159,7 +159,7 @@ describe RedisSessionStore do
 
     let(:env)          { double('env') }
     let(:session_id)   { 12_345 }
-    let(:session_data) { double('session_data') }
+    let(:session_data) { {'session_data': 'here'} }
     let(:options)      { { expire_after: 123 } }
 
     context 'when successfully persisting the session' do
