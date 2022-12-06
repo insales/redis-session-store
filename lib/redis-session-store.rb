@@ -1,19 +1,14 @@
 require 'redis'
 require 'active_support/core_ext/hash/indifferent_access'
+require 'action_dispatch'
+require 'action_dispatch/middleware/session/abstract_store'
 
 # Redis session storage for Rails, and for Rails only. Derived from
 # the MemCacheStore code, simply dropping in Redis instead.
 class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
   VERSION = '0.11.5'.freeze
   # :nocov:
-  # Rails 3.1 and beyond defines the constant elsewhere
-  unless defined?(ENV_SESSION_OPTIONS_KEY)
-    ENV_SESSION_OPTIONS_KEY = if Rack.release.split('.').first.to_i > 1
-                                Rack::RACK_SESSION_OPTIONS
-                              else
-                                Rack::Session::Abstract::ENV_SESSION_OPTIONS_KEY
-                              end
-  end
+  ENV_SESSION_OPTIONS_KEY = Rack::RACK_SESSION_OPTIONS unless defined?(ENV_SESSION_OPTIONS_KEY)
   # :nocov:
 
   # ==== Options
@@ -23,7 +18,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
   #   * +:key_prefix+ - Prefix for keys used in Redis, e.g. +myapp:+
   #   * +:expire_after+ - A number in seconds for session timeout
   #   * +:client+ - Connect to Redis with given object rather than create one
-  # * +:on_redis_down:+ - Called with err, env, and SID on Errno::ECONNREFUSED
+  # * +:on_redis_down:+ - Called with err, rack request, and SID on Errno::ECONNREFUSED
   # * +:on_session_load_error:+ - Called with err and SID on Marshal.load fail
   # * +:serializer:+ - Serializer to use on session data, default is :marshal.
   #
@@ -62,15 +57,15 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
   # Prevents needless new sessions from being created in scenario where
   # user HAS session id, but it already expired, or is invalid for some
   # other reason, and session was accessed only for reading.
-  def session_exists?(env)
-    value = current_session_id(env)
+  def session_exists?(request)
+    value = current_session_id(request)
 
     !!(
       value && !value.empty? &&
       key_exists?(value)
     )
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
-    on_redis_down.call(e, env, value) if on_redis_down
+    on_redis_down.call(e, request, value) if on_redis_down
 
     true
   end
@@ -101,13 +96,12 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     [generate_sid, {}.with_indifferent_access]
   end
 
-  def get_session(env, sid)
+  def find_session(request, sid)
     sid && (session = load_session_from_redis(sid)) ? [sid, session] : session_default_values
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
-    on_redis_down.call(e, env, sid) if on_redis_down
+    on_redis_down.call(e, request, sid) if on_redis_down
     session_default_values
   end
-  alias find_session get_session
 
   def load_session_from_redis(sid)
     data = redis.get(prefixed(sid))
@@ -125,8 +119,8 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     session.with_indifferent_access
   end
 
-  def set_session(env, sid, session_data, options = nil)
-    expiry = get_expiry(env, options)
+  def write_session(request, sid, session_data, options = nil)
+    expiry = get_expiry(request, options)
     if expiry
       redis.setex(prefixed(sid), expiry, encode(session_data))
     else
@@ -134,13 +128,12 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     end
     sid
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
-    on_redis_down.call(e, env, sid) if on_redis_down
+    on_redis_down.call(e, request, sid) if on_redis_down
     false
   end
-  alias write_session set_session
 
-  def get_expiry(env, options)
-    session_storage_options = options || env.fetch(ENV_SESSION_OPTIONS_KEY, {})
+  def get_expiry(request, options)
+    session_storage_options = options || request.env.fetch(ENV_SESSION_OPTIONS_KEY, {})
     session_storage_options[:ttl] || session_storage_options[:expire_after]
   end
 
@@ -148,15 +141,14 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     serializer.dump(session_data)
   end
 
-  def destroy_session(env, sid, options)
-    destroy_session_from_sid(sid, (options || {}).to_hash.merge(env: env))
+  def delete_session(request, sid, options)
+    destroy_session_from_sid(sid, (options || {}).to_hash.merge(request: request))
   end
-  alias delete_session destroy_session
 
-  def destroy(env)
-    if env['rack.request.cookie_hash'] &&
-       (sid = env['rack.request.cookie_hash'][key])
-      destroy_session_from_sid(sid, drop: true, env: env)
+  def destroy(request)
+    if request.env['rack.request.cookie_hash'] &&
+       (sid = request.env['rack.request.cookie_hash'][key])
+      destroy_session_from_sid(sid, drop: true, request: request)
     end
     false
   end
@@ -165,7 +157,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     redis.del(prefixed(sid))
     (options || {})[:drop] ? nil : generate_sid
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
-    on_redis_down.call(e, options[:env] || {}, sid) if on_redis_down
+    on_redis_down.call(e, options[:request] || {}, sid) if on_redis_down
   end
 
   def determine_serializer(serializer)
