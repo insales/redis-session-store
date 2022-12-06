@@ -6,6 +6,7 @@
 
 ### Removed
 - Dropped support for rack < 2 - we already depend on actionpack >= 6, which depends on rack >= 2.2 and activesupport
+- Dropped support for redis gem < 4.2
 
 # [0.11.5] - 2022-11-27
 

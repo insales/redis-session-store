@@ -218,26 +218,6 @@ describe RedisSessionStore do
           end
         end
       end
-
-      context 'when redis does suport exists?' do
-        it 'calls it' do
-          expect(redis).to receive(:exists?).and_return(false)
-          expect(redis).not_to receive(:exists)
-          store.send(:session_exists?, :env)
-        end
-      end
-
-      context 'when redis does not support #exists?' do
-        before do
-          allow(redis).to receive(:respond_to?).with(:exists?).and_return(false)
-          allow(redis).to receive(:exists?).and_raise('shouhld not be called')
-        end
-
-        it 'uses old method exist' do
-          expect(redis).to receive(:exists).with('foo').and_return(true)
-          expect(store.send(:session_exists?, :env)).to eq(true)
-        end
-      end
     end
   end
 
