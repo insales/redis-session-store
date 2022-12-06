@@ -62,22 +62,12 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
 
     !!(
       value && !value.empty? &&
-      key_exists?(value)
+      redis.exists?(prefixed(value))
     )
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
     on_redis_down.call(e, request, value) if on_redis_down
 
     true
-  end
-
-  def key_exists?(value)
-    if redis.respond_to?(:exists?)
-      # added in redis gem v4.2
-      redis.exists?(prefixed(value))
-    else
-      # older method, will return an integer starting in redis gem v4.3
-      redis.exists(prefixed(value))
-    end
   end
 
   def verify_handlers!
