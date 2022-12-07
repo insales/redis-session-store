@@ -80,17 +80,16 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     end
   end
 
+  def generate_sid(_request)
+    super()
+  end
+
   def prefixed(sid)
     "#{default_options[:key_prefix]}#{sid}"
   end
 
   def session_default_value
     {}.with_indifferent_access
-  end
-
-  # deprecated
-  def session_default_values
-    [generate_sid, session_default_value]
   end
 
   def find_session(request, sid)
@@ -104,7 +103,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
       return [sid, session] if session
     end
 
-    [generate_sid, session_default_value]
+    [generate_sid(request), session_default_value]
   end
 
   def load_session_from_redis(sid)
@@ -159,7 +158,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
 
   def destroy_session_from_sid(sid, options = {})
     redis.del(prefixed(sid))
-    (options || {})[:drop] ? nil : generate_sid
+    (options || {})[:drop] ? nil : generate_sid(options[:request])
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
     on_redis_down.call(e, options[:request] || {}, sid) if on_redis_down
   end
