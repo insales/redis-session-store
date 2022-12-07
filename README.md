@@ -64,6 +64,7 @@ custom serializer:
 * `:json` - serialize cookie values with `JSON` (Requires Rails 4+)
 * `:marshal` - serialize cookie values with `Marshal` (Default)
 * `:hybrid` - transparently migrate existing `Marshal` cookie values to `JSON` (Requires Rails 4+)
+* `:prehybrid` - prevent a short period of sessions loss during `:hybrid` deploy
 * `CustomClass` - You can just pass the constant name of any class that responds to `.load` and `.dump`
 
 ``` ruby

@@ -429,6 +429,20 @@ describe RedisSessionStore do
         end
       end
 
+      describe 'pre-hybrid' do
+        let(:options) { { serializer: :prehybrid } }
+
+        context 'with marshal encoded data' do
+          it_behaves_like 'serializer'
+        end
+
+        context 'with json encoded data' do
+          let(:encoded_data) { Marshal.dump(session_data) }
+
+          it_behaves_like 'serializer'
+        end
+      end
+
       describe 'custom' do
         let :custom_serializer do
           Class.new do
