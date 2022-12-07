@@ -77,6 +77,9 @@ describe RedisSessionStore do
 
     it 'assigns the :ttl option to @default_options' do
       expect(default_options[:ttl]).to eq(ttl_seconds)
+    end
+
+    it 'does not assign :expire_after option to @default_options' do
       expect(default_options[:expire_after]).to be_nil
     end
   end
@@ -195,7 +198,7 @@ describe RedisSessionStore do
           let(:session_id) { nil }
 
           it 'returns false' do
-            expect(store.send(:session_exists?, :env)).to eq(false)
+            expect(store.send(:session_exists?, :env)).to be(false)
           end
         end
 
@@ -204,7 +207,7 @@ describe RedisSessionStore do
 
           it 'returns false' do
             allow(store).to receive(:current_session_id).with(:env).and_return('')
-            expect(store.send(:session_exists?, :env)).to eq(false)
+            expect(store.send(:session_exists?, :env)).to be(false)
           end
         end
       end
@@ -212,15 +215,15 @@ describe RedisSessionStore do
       context 'when session id is provided' do
         context 'when session id does not exist in redis' do
           it 'returns false' do
-            expect(redis).to receive(:exists?).with('foo').and_return(false)
-            expect(store.send(:session_exists?, :env)).to eq(false)
+            allow(redis).to receive(:exists?).with('foo').and_return(false)
+            expect(store.send(:session_exists?, :env)).to be(false)
           end
         end
 
         context 'when session id exists in redis' do
           it 'returns true' do
-            expect(redis).to receive(:exists?).with('foo').and_return(true)
-            expect(store.send(:session_exists?, :env)).to eq(true)
+            allow(redis).to receive(:exists?).with('foo').and_return(true)
+            expect(store.send(:session_exists?, :env)).to be(true)
           end
         end
 
@@ -230,7 +233,7 @@ describe RedisSessionStore do
           end
 
           it 'returns true (fallback to old behavior)' do
-            expect(store.send(:session_exists?, :env)).to eq(true)
+            expect(store.send(:session_exists?, :env)).to be(true)
           end
 
           it 'explodes when :on_redis_down re-raises' do
@@ -267,7 +270,7 @@ describe RedisSessionStore do
       end
 
       it 'generates new session when no sid' do
-        expect(store).to receive(:generate_sid).and_return(fake_key)
+        allow(store).to receive(:generate_sid).and_return(fake_key)
         expect(store.send(:find_session, double('env'), nil)).to eq([fake_key, {}])
       end
 
@@ -278,16 +281,16 @@ describe RedisSessionStore do
 
         it 'generates new sid' do
           new_sid = Rack::Session::SessionId.new('new-sid')
-          expect(store).to receive(:generate_sid).and_return(new_sid)
+          allow(store).to receive(:generate_sid).and_return(new_sid)
           expect(store.send(:find_session, double('env'), fake_key)).to eq([new_sid, {}])
         end
 
-        context 'and keep_sid is set' do
+        context 'when keep_sid is set' do
           let(:options) { super().merge(keep_sid: true) }
 
           it 'uses old sid with new session' do
             allow(redis).to receive(:get).with("#{options[:key_prefix]}#{fake_key}")
-            expect(store).not_to receive(:generate_sid)
+            allow(store).to receive(:generate_sid).and_raise('should not be called')
             expect(store.send(:find_session, double('env'), fake_key)).to eq([fake_key, {}])
           end
         end
@@ -342,6 +345,7 @@ describe RedisSessionStore do
           let(:request) { Rack::Request.new({}) }
 
           it 'does nothing' do
+            expect(redis).not_to receive(:del)
             store.send(:destroy, request)
           end
         end
@@ -352,7 +356,7 @@ describe RedisSessionStore do
           end
 
           it 'returns false' do
-            expect(store.send(:destroy, request)).to eq(false)
+            expect(store.send(:destroy, request)).to be(false)
           end
 
           it 'explodes when :on_redis_down re-raises' do
@@ -397,35 +401,35 @@ describe RedisSessionStore do
         end
       end
 
-      context 'marshal' do
+      describe 'marshal' do
         let(:options) { { serializer: :marshal } }
 
         it_behaves_like 'serializer'
       end
 
-      context 'json' do
+      describe 'json' do
         let(:options) { { serializer: :json } }
         let(:encoded_data) { '{"some":"data"}' }
 
         it_behaves_like 'serializer'
       end
 
-      context 'hybrid' do
+      describe 'hybrid' do
         let(:options) { { serializer: :hybrid } }
         let(:expected_encoding) { '{"some":"data"}' }
 
-        context 'marshal encoded data' do
+        context 'with marshal encoded data' do
           it_behaves_like 'serializer'
         end
 
-        context 'json encoded data' do
+        context 'with json encoded data' do
           let(:encoded_data) { '{"some":"data"}' }
 
           it_behaves_like 'serializer'
         end
       end
 
-      context 'custom' do
+      describe 'custom' do
         let :custom_serializer do
           Class.new do
             def self.load(_value)
@@ -470,17 +474,14 @@ describe RedisSessionStore do
         end
 
         context 'when a custom on_session_load_error handler is provided' do
-          before do
-            store.on_session_load_error = lambda do |e, sid|
-              @e = e
-              @sid = sid
-            end
-          end
+          let(:handler) { double('handler') }
+          let(:sid) { 'foo' }
+
+          before { store.on_session_load_error = handler }
 
           it 'passes the error and the sid to the handler' do
-            load_session_from_redis['foo']
-            expect(@e).to be_kind_of(StandardError)
-            expect(@sid).to eq('foo')
+            expect(handler).to receive(:call).with(be_a(StandardError), sid)
+            load_session_from_redis[sid]
           end
         end
       end
@@ -499,17 +500,14 @@ describe RedisSessionStore do
         end
 
         context 'when a custom on_session_load_error handler is provided' do
-          before do
-            store.on_session_load_error = lambda do |e, sid|
-              @e = e
-              @sid = sid
-            end
-          end
+          let(:handler) { double('handler') }
+          let(:sid) { 'foo' }
+
+          before { store.on_session_load_error = handler }
 
           it 'passes the error and the sid to the handler' do
-            load_session_from_redis['foo']
-            expect(@e).to be_kind_of(StandardError)
-            expect(@sid).to eq('foo')
+            expect(handler).to receive(:call).with(be_a(StandardError), sid)
+            load_session_from_redis[sid]
           end
         end
       end
@@ -549,13 +547,13 @@ describe RedisSessionStore do
         before { allow(redis).to receive(:set).and_raise(redis_exception_type) }
 
         it 'returns false' do
-          expect(write_session[data: { 'foo' => 'bar' }]).to eq false
+          expect(write_session[data: { 'foo' => 'bar' }]).to be false
         end
 
         it 'calls on_redis_down' do
           store.on_redis_down = double('on_redis_down')
           expect(store.on_redis_down).to receive(:call).with(
-            be_kind_of(redis_exception_type), request, sid
+            be_a(redis_exception_type), request, sid
           )
           write_session[data: { 'foo' => 'bar' }]
         end
