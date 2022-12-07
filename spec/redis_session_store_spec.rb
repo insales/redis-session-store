@@ -180,7 +180,7 @@ describe RedisSessionStore do
   describe 'behavior' do
     let(:redis) { double('redis') }
 
-    before { allow(store).to receive(:redis).and_return(redis) }
+    before { allow(store).to receive(:redis).with(anything).and_return(redis) }
 
     describe 'checking for session existence' do
       let(:session_id) { 'foo' }
@@ -446,6 +446,12 @@ describe RedisSessionStore do
     end
 
     describe 'handling decode errors' do
+      subject(:load_session_from_redis) do
+        ->(sid) { store.send(:load_session_from_redis, request, sid) }
+      end
+
+      let(:request) { double('request') }
+
       context 'when a class is serialized that does not exist' do
         let(:redis) do
           double('redis',
@@ -454,13 +460,13 @@ describe RedisSessionStore do
         end
 
         it 'returns an empty session' do
-          expect(store.send(:load_session_from_redis, 'whatever')).to be_nil
+          expect(load_session_from_redis['whatever']).to be_nil
         end
 
         it 'destroys and drops the session' do
           expect(store).to receive(:destroy_session_from_sid)
-            .with('wut', drop: true)
-          store.send(:load_session_from_redis, 'wut')
+            .with('wut', drop: true, request: request)
+          load_session_from_redis['wut']
         end
 
         context 'when a custom on_session_load_error handler is provided' do
@@ -472,7 +478,7 @@ describe RedisSessionStore do
           end
 
           it 'passes the error and the sid to the handler' do
-            store.send(:load_session_from_redis, 'foo')
+            load_session_from_redis['foo']
             expect(@e).to be_kind_of(StandardError)
             expect(@sid).to eq('foo')
           end
@@ -483,13 +489,13 @@ describe RedisSessionStore do
         let(:redis) { double('redis', get: "\x00\x00\x00\x00", del: true) }
 
         it 'returns an empty session' do
-          expect(store.send(:load_session_from_redis, 'bar')).to be_nil
+          expect(load_session_from_redis['bar']).to be_nil
         end
 
         it 'destroys and drops the session' do
           expect(store).to receive(:destroy_session_from_sid)
-            .with('wut', drop: true)
-          store.send(:load_session_from_redis, 'wut')
+            .with('wut', drop: true, request: request)
+          load_session_from_redis['wut']
         end
 
         context 'when a custom on_session_load_error handler is provided' do
@@ -501,7 +507,7 @@ describe RedisSessionStore do
           end
 
           it 'passes the error and the sid to the handler' do
-            store.send(:load_session_from_redis, 'foo')
+            load_session_from_redis['foo']
             expect(@e).to be_kind_of(StandardError)
             expect(@sid).to eq('foo')
           end
