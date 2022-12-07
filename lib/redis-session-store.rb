@@ -111,13 +111,17 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     [generate_sid(request), session_default_value]
   end
 
+  def read_from_redis(_request, redis_overridable, key)
+    redis_overridable.get(key)
+  end
+
   def load_session_from_redis(request, sid)
-    data = redis(request).get(prefixed(sid))
+    data = read_from_redis(request, redis(request), prefixed(sid))
     begin
       data ? decode(data) : nil
     rescue StandardError => e
       delete_session_in_redis(request, sid)
-      on_session_load_error.call(e, sid) if on_session_load_error
+      on_session_load_error&.call(e, sid)
       nil
     end
   end
@@ -168,7 +172,10 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
     on_redis_down&.call(e, request, sid)
   end
+end
 
+# Serializers
+class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
   def determine_serializer(serializer)
     serializer ||= :marshal
     case serializer
