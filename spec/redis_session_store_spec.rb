@@ -195,7 +195,7 @@ describe RedisSessionStore do
           let(:session_id) { nil }
 
           it 'returns false' do
-            expect(store.send(:session_exists?, :env)).to eq(false)
+            expect(store.send(:session_exists?, :env)).to be(false)
           end
         end
 
@@ -204,7 +204,7 @@ describe RedisSessionStore do
 
           it 'returns false' do
             allow(store).to receive(:current_session_id).with(:env).and_return('')
-            expect(store.send(:session_exists?, :env)).to eq(false)
+            expect(store.send(:session_exists?, :env)).to be(false)
           end
         end
       end
@@ -213,14 +213,14 @@ describe RedisSessionStore do
         context 'when session id does not exist in redis' do
           it 'returns false' do
             expect(redis).to receive(:exists?).with('foo').and_return(false)
-            expect(store.send(:session_exists?, :env)).to eq(false)
+            expect(store.send(:session_exists?, :env)).to be(false)
           end
         end
 
         context 'when session id exists in redis' do
           it 'returns true' do
             expect(redis).to receive(:exists?).with('foo').and_return(true)
-            expect(store.send(:session_exists?, :env)).to eq(true)
+            expect(store.send(:session_exists?, :env)).to be(true)
           end
         end
 
@@ -230,7 +230,7 @@ describe RedisSessionStore do
           end
 
           it 'returns true (fallback to old behavior)' do
-            expect(store.send(:session_exists?, :env)).to eq(true)
+            expect(store.send(:session_exists?, :env)).to be(true)
           end
 
           it 'explodes when :on_redis_down re-raises' do
@@ -342,6 +342,7 @@ describe RedisSessionStore do
           let(:request) { Rack::Request.new({}) }
 
           it 'does nothing' do
+            expect(redis).not_to receive(:del)
             store.send(:destroy, request)
           end
         end
@@ -352,7 +353,7 @@ describe RedisSessionStore do
           end
 
           it 'returns false' do
-            expect(store.send(:destroy, request)).to eq(false)
+            expect(store.send(:destroy, request)).to be(false)
           end
 
           it 'explodes when :on_redis_down re-raises' do
@@ -479,7 +480,7 @@ describe RedisSessionStore do
 
           it 'passes the error and the sid to the handler' do
             load_session_from_redis['foo']
-            expect(@e).to be_kind_of(StandardError)
+            expect(@e).to be_a(StandardError)
             expect(@sid).to eq('foo')
           end
         end
@@ -508,7 +509,7 @@ describe RedisSessionStore do
 
           it 'passes the error and the sid to the handler' do
             load_session_from_redis['foo']
-            expect(@e).to be_kind_of(StandardError)
+            expect(@e).to be_a(StandardError)
             expect(@sid).to eq('foo')
           end
         end
@@ -549,13 +550,13 @@ describe RedisSessionStore do
         before { allow(redis).to receive(:set).and_raise(redis_exception_type) }
 
         it 'returns false' do
-          expect(write_session[data: { 'foo' => 'bar' }]).to eq false
+          expect(write_session[data: { 'foo' => 'bar' }]).to be false
         end
 
         it 'calls on_redis_down' do
           store.on_redis_down = double('on_redis_down')
           expect(store.on_redis_down).to receive(:call).with(
-            be_kind_of(redis_exception_type), request, sid
+            be_a(redis_exception_type), request, sid
           )
           write_session[data: { 'foo' => 'bar' }]
         end

@@ -65,3 +65,6 @@ RSpec/SubjectStub:
 RSpec/VerifiedDoubles:
   Exclude:
     - 'spec/redis_session_store_spec.rb'
+
+Gemspec/RequireMFA:
+  Enabled: false
