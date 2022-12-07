@@ -34,7 +34,7 @@ describe RedisSessionStore do
     end
 
     it 'creates a redis instance' do
-      expect(store.instance_variable_get(:@redis)).not_to be_nil
+      expect(store.send(:redis, double('request'))).not_to be_nil
     end
 
     it 'assigns the :host option to @default_options' do
