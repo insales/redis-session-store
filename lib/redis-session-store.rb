@@ -116,7 +116,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     begin
       data ? decode(data) : nil
     rescue StandardError => e
-      destroy_session_from_sid(sid, drop: true, request: request)
+      delete_session_in_redis(request, sid)
       on_session_load_error.call(e, sid) if on_session_load_error
       nil
     end
@@ -127,16 +127,17 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     session.with_indifferent_access
   end
 
-  def write_session(request, sid, session_data, options = nil)
-    expiry = get_expiry(request, options)
-    if expiry
+  def write_session(request, sid, session_data, options = nil) # rubocop:disable Metrics/MethodLength
+    if keep_sid && session_data.empty?
+      delete_session_in_redis(request, sid)
+    elsif (expiry = get_expiry(request, options))
       redis(request).setex(prefixed(sid), expiry, encode(session_data))
     else
       redis(request).set(prefixed(sid), encode(session_data))
     end
     sid
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
-    on_redis_down.call(e, request, sid) if on_redis_down
+    on_redis_down&.call(e, request, sid)
     false
   end
 
@@ -150,22 +151,22 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
   end
 
   def delete_session(request, sid, options)
-    destroy_session_from_sid(sid, (options || {}).to_hash.merge(request: request))
+    delete_session_in_redis(request, sid)
+    (options || {})[:drop] ? nil : generate_sid(request)
   end
 
   def destroy(request)
     if request.env['rack.request.cookie_hash'] &&
        (sid = request.env['rack.request.cookie_hash'][key])
-      destroy_session_from_sid(sid, drop: true, request: request)
+      delete_session_in_redis(request, sid)
     end
     false
   end
 
-  def destroy_session_from_sid(sid, options = {})
-    redis(options[:request]).del(prefixed(sid))
-    (options || {})[:drop] ? nil : generate_sid(options[:request])
+  def delete_session_in_redis(request, sid)
+    redis(request).del(prefixed(sid))
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
-    on_redis_down.call(e, options[:request] || {}, sid) if on_redis_down
+    on_redis_down&.call(e, request, sid)
   end
 
   def determine_serializer(serializer)
