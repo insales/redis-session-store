@@ -145,6 +145,18 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     false
   end
 
+  # inject sid to make rack not call generate_sid, it is called from delete_session if needed
+  def commit_session(request, res)
+    session = request.get_header(Rack::RACK_SESSION)
+    if !session.id && session.options.yield_self { |opt| opt[:drop] || opt[:renew] }
+      tmp_sid = generate_sid(request)
+      session.instance_variable_set(:@id, tmp_sid) # for plain rack
+      session.options[:id] = tmp_sid # for actiondispatch
+      raise 'cannot inject session id, Rack will fail on generate_sid' unless session.id
+    end
+    super
+  end
+
   def get_expiry(request, options)
     session_storage_options = options || request.env.fetch(ENV_SESSION_OPTIONS_KEY, {})
     session_storage_options[:ttl] || session_storage_options[:expire_after]
@@ -156,12 +168,13 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
 
   def delete_session(request, sid, options)
     delete_session_in_redis(request, sid)
-    (options || {})[:drop] ? nil : generate_sid(request)
+    return nil if options&.[](:drop)
+
+    generate_sid(request)
   end
 
   def destroy(request)
-    if request.env['rack.request.cookie_hash'] &&
-       (sid = request.env['rack.request.cookie_hash'][key])
+    if (sid = request.env['rack.request.cookie_hash']&.[](key))
       delete_session_in_redis(request, sid)
     end
     false
