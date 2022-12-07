@@ -232,7 +232,7 @@ describe RedisSessionStore do
 
     describe 'generate_sid' do
       it 'generates a secure ID' do
-        sid = store.send(:generate_sid)
+        sid = store.send(:generate_sid, double('request'))
         expect(sid).to be_a(Rack::Session::SessionId)
       end
     end
@@ -358,7 +358,7 @@ describe RedisSessionStore do
       it 'deletes the prefixed key from redis' do
         redis = double('redis', setnx: true)
         allow(store).to receive(:redis).and_return(redis)
-        sid = store.send(:generate_sid)
+        sid = store.send(:generate_sid, double('request'))
         expect(redis).to receive(:del).with("#{options[:key_prefix]}#{sid}")
 
         store.send(:delete_session, {}, sid, nil)
