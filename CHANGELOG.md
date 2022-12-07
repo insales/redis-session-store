@@ -10,6 +10,7 @@
 
 ### Added
 - Possibility to override redis based on request
+- `skip_exists` option to save a call to redis on session load
 
 # [0.11.5] - 2022-11-27
 

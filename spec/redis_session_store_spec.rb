@@ -227,6 +227,14 @@ describe RedisSessionStore do
           end
         end
 
+        context 'when skip_exists is set' do
+          let(:options) { super().merge(skip_exists: true) }
+
+          it 'does not call redis' do
+            expect(store.send(:session_exists?, :env)).to be(true)
+          end
+        end
+
         context 'when redis is down' do
           before do
             allow(redis).to receive(:exists?).and_raise(Redis::CannotConnectError)
