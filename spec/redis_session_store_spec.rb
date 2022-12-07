@@ -378,12 +378,23 @@ describe RedisSessionStore do
 
       context 'when destroyed via #delete_session' do
         let(:redis) { double('redis', setnx: true) }
+        let(:sid) { store.send(:generate_sid, double('request')) }
+        let(:new_sid) { store.send(:generate_sid, double('request')) }
 
         it 'deletes the prefixed key from redis' do
-          sid = store.send(:generate_sid, double('request'))
           expect(redis).to receive(:del).with("#{options[:key_prefix]}#{sid}")
-
           store.send(:delete_session, {}, sid, nil)
+        end
+
+        it 'returns new sid' do
+          allow(redis).to receive(:del).with("#{options[:key_prefix]}#{sid}")
+          allow(store).to receive(:generate_sid).and_return(new_sid)
+          expect(store.send(:delete_session, {}, sid, nil)).to eq(new_sid)
+        end
+
+        it 'returns nil when dropped' do
+          allow(redis).to receive(:del).with("#{options[:key_prefix]}#{sid}")
+          expect(store.send(:delete_session, {}, sid, drop: true)).to be_nil
         end
       end
     end
@@ -490,8 +501,7 @@ describe RedisSessionStore do
         end
 
         it 'destroys and drops the session' do
-          expect(store).to receive(:destroy_session_from_sid)
-            .with('wut', drop: true, request: request)
+          expect(store).to receive(:delete_session_in_redis).with(request, 'wut')
           load_session_from_redis['wut']
         end
 
@@ -516,8 +526,7 @@ describe RedisSessionStore do
         end
 
         it 'destroys and drops the session' do
-          expect(store).to receive(:destroy_session_from_sid)
-            .with('wut', drop: true, request: request)
+          expect(store).to receive(:delete_session_in_redis).with(request, 'wut')
           load_session_from_redis['wut']
         end
 
@@ -559,6 +568,16 @@ describe RedisSessionStore do
           write_session[data: data2]
           _, session = store.send(:find_session, request, sid)
           expect(session).to eq(data2)
+        end
+      end
+
+      context 'when keep_sid is set' do
+        let(:redis) { double('redis') }
+        let(:options) { super().merge(keep_sid: true) }
+
+        it 'deletes empty session instead of writing' do
+          expect(redis).to receive(:del).with("#{options[:key_prefix]}#{sid}")
+          write_session[data: {}]
         end
       end
 
