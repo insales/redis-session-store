@@ -22,6 +22,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
   # * +:on_session_load_error:+ - Called with err and SID on Marshal.load fail
   # * +:serializer:+ - Serializer to use on session data, default is :marshal.
   # * +:keep_sid:+ - Keep sid for sessions that are expired in redis.
+  # * +:skip_exists:+ - Make session existance check not call redis, saves a couple of ms.
   #
   # ==== Examples
   #
@@ -42,10 +43,10 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     @default_options.merge!(options[:redis] || {})
     init_options = options[:redis]&.reject { |k, _v| %i[expire_after key_prefix].include?(k) } || {}
     @redis = init_options[:client] || Redis.new(init_options)
-    @on_redis_down = options[:on_redis_down]
     @serializer = determine_serializer(options[:serializer])
-    @on_session_load_error = options[:on_session_load_error]
-    @keep_sid = options[:keep_sid]
+    %i[on_redis_down on_session_load_error keep_sid skip_exists].each do |option|
+      instance_variable_set(:"@#{option}", options[option])
+    end
     verify_handlers!
   end
 
@@ -53,7 +54,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
 
   private
 
-  attr_reader :key, :default_options, :serializer, :keep_sid
+  attr_reader :key, :default_options, :serializer, :keep_sid, :skip_exists
 
   def redis(_request)
     @redis
@@ -68,7 +69,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
 
     !!(
       value && !value.empty? &&
-      redis(request).exists?(prefixed(value))
+      ((skip_exists && !value.to_s.empty?) || redis(request).exists?(prefixed(value)))
     )
   rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
     on_redis_down.call(e, request, value) if on_redis_down
