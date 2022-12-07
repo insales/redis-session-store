@@ -173,6 +173,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     when :marshal then Marshal
     when :json    then JsonSerializer
     when :hybrid  then HybridSerializer
+    when :prehybrid then PreHybridSerializer
     else serializer
     end
   end
@@ -202,6 +203,15 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
 
     def self.needs_migration?(value)
       value.start_with?(MARSHAL_SIGNATURE)
+    end
+  end
+
+  # When hybrid is deployed, some processes can take more time to restart
+  # and get json sessions from newly started hybrid ones, destroing these sessions and erroring
+  # Use this prior to hybrid to prevent this.
+  class PreHybridSerializer < HybridSerializer
+    def self.dump(value)
+      Marshal.dump(value)
     end
   end
 end
