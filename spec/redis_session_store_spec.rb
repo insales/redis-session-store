@@ -246,6 +246,37 @@ describe RedisSessionStore do
       store.send(:find_session, double('env'), fake_key)
     end
 
+    it 'generates new session when no sid' do
+      expect(store).to receive(:generate_sid).and_return(fake_key)
+      expect(store.send(:find_session, double('env'), nil)).to eq([fake_key, {}])
+    end
+
+    context 'when value missing in redis' do
+      before do
+        redis = double('redis')
+        allow(store).to receive(:redis).and_return(redis)
+        allow(redis).to receive(:get).with("#{options[:key_prefix]}#{fake_key}").and_return(nil)
+      end
+
+      it 'generates new sid' do
+        new_sid = Rack::Session::SessionId.new('new-sid')
+        expect(store).to receive(:generate_sid).and_return(new_sid)
+        expect(store.send(:find_session, double('env'), fake_key)).to eq([new_sid, {}])
+      end
+
+      context 'and keep_sid is set' do
+        let(:options) { super().merge(keep_sid: true) }
+
+        it 'uses old sid with new session' do
+          redis = double('redis')
+          allow(store).to receive(:redis).and_return(redis)
+          allow(redis).to receive(:get).with("#{options[:key_prefix]}#{fake_key}")
+          expect(store).not_to receive(:generate_sid)
+          expect(store.send(:find_session, double('env'), fake_key)).to eq([fake_key, {}])
+        end
+      end
+    end
+
     context 'when redis is down' do
       before do
         allow(store).to receive(:redis).and_raise(Redis::CannotConnectError)

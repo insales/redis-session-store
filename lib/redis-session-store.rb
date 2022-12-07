@@ -21,6 +21,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
   # * +:on_redis_down:+ - Called with err, rack request, and SID on Errno::ECONNREFUSED
   # * +:on_session_load_error:+ - Called with err and SID on Marshal.load fail
   # * +:serializer:+ - Serializer to use on session data, default is :marshal.
+  # * +:keep_sid:+ - Keep sid for sessions that are expired in redis.
   #
   # ==== Examples
   #
@@ -44,6 +45,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     @on_redis_down = options[:on_redis_down]
     @serializer = determine_serializer(options[:serializer])
     @on_session_load_error = options[:on_session_load_error]
+    @keep_sid = options[:keep_sid]
     verify_handlers!
   end
 
@@ -51,7 +53,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
 
   private
 
-  attr_reader :redis, :key, :default_options, :serializer
+  attr_reader :redis, :key, :default_options, :serializer, :keep_sid
 
   # overrides method defined in rack to actually verify session existence
   # Prevents needless new sessions from being created in scenario where
@@ -82,15 +84,27 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     "#{default_options[:key_prefix]}#{sid}"
   end
 
+  def session_default_value
+    {}.with_indifferent_access
+  end
+
+  # deprecated
   def session_default_values
-    [generate_sid, {}.with_indifferent_access]
+    [generate_sid, session_default_value]
   end
 
   def find_session(request, sid)
-    sid && (session = load_session_from_redis(sid)) ? [sid, session] : session_default_values
-  rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
-    on_redis_down.call(e, request, sid) if on_redis_down
-    session_default_values
+    if sid
+      session = begin
+        load_session_from_redis(sid) || (keep_sid && session_default_value)
+      rescue Errno::ECONNREFUSED, Redis::CannotConnectError => e
+        on_redis_down&.call(e, request, sid)
+        nil
+      end
+      return [sid, session] if session
+    end
+
+    [generate_sid, session_default_value]
   end
 
   def load_session_from_redis(sid)
