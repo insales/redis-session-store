@@ -151,362 +151,6 @@ describe RedisSessionStore do
     end
   end
 
-  describe 'checking for session existence' do
-    let(:session_id) { 'foo' }
-
-    before do
-      allow(store).to receive(:current_session_id)
-        .with(:env).and_return(session_id)
-    end
-
-    context 'when session id is not provided' do
-      context 'when session id is nil' do
-        let(:session_id) { nil }
-
-        it 'returns false' do
-          expect(store.send(:session_exists?, :env)).to eq(false)
-        end
-      end
-
-      context 'when session id is empty string' do
-        let(:session_id) { '' }
-
-        it 'returns false' do
-          allow(store).to receive(:current_session_id).with(:env).and_return('')
-          expect(store.send(:session_exists?, :env)).to eq(false)
-        end
-      end
-    end
-
-    context 'when session id is provided' do
-      let(:redis) do
-        double('redis').tap do |o|
-          allow(store).to receive(:redis).and_return(o)
-        end
-      end
-
-      context 'when session id does not exist in redis' do
-        it 'returns false' do
-          expect(redis).to receive(:exists?).with('foo').and_return(false)
-          expect(store.send(:session_exists?, :env)).to eq(false)
-        end
-      end
-
-      context 'when session id exists in redis' do
-        it 'returns true' do
-          expect(redis).to receive(:exists?).with('foo').and_return(true)
-          expect(store.send(:session_exists?, :env)).to eq(true)
-        end
-      end
-
-      context 'when redis is down' do
-        before do
-          allow(store).to receive(:redis).and_raise(Redis::CannotConnectError)
-        end
-
-        it 'returns true (fallback to old behavior)' do
-          expect(store.send(:session_exists?, :env)).to eq(true)
-        end
-
-        context 'when :on_redis_down re-raises' do
-          before { store.on_redis_down = ->(e, *) { raise e } }
-
-          it 'explodes' do
-            expect do
-              store.send(:session_exists?, :env)
-            end.to raise_error(Redis::CannotConnectError)
-          end
-        end
-      end
-    end
-  end
-
-  describe 'fetching a session' do
-    let :options do
-      {
-        key_prefix: 'customprefix::'
-      }
-    end
-
-    let(:fake_key) { 'thisisarediskey' }
-
-    describe 'generate_sid' do
-      it 'generates a secure ID' do
-        sid = store.send(:generate_sid, double('request'))
-        expect(sid).to be_a(Rack::Session::SessionId)
-      end
-    end
-
-    it 'retrieves the prefixed key from redis' do
-      redis = double('redis')
-      allow(store).to receive(:redis).and_return(redis)
-      allow(store).to receive(:generate_sid).and_return(fake_key)
-      expect(redis).to receive(:get).with("#{options[:key_prefix]}#{fake_key}")
-
-      store.send(:find_session, double('env'), fake_key)
-    end
-
-    it 'generates new session when no sid' do
-      expect(store).to receive(:generate_sid).and_return(fake_key)
-      expect(store.send(:find_session, double('env'), nil)).to eq([fake_key, {}])
-    end
-
-    context 'when value missing in redis' do
-      before do
-        redis = double('redis')
-        allow(store).to receive(:redis).and_return(redis)
-        allow(redis).to receive(:get).with("#{options[:key_prefix]}#{fake_key}").and_return(nil)
-      end
-
-      it 'generates new sid' do
-        new_sid = Rack::Session::SessionId.new('new-sid')
-        expect(store).to receive(:generate_sid).and_return(new_sid)
-        expect(store.send(:find_session, double('env'), fake_key)).to eq([new_sid, {}])
-      end
-
-      context 'and keep_sid is set' do
-        let(:options) { super().merge(keep_sid: true) }
-
-        it 'uses old sid with new session' do
-          redis = double('redis')
-          allow(store).to receive(:redis).and_return(redis)
-          allow(redis).to receive(:get).with("#{options[:key_prefix]}#{fake_key}")
-          expect(store).not_to receive(:generate_sid)
-          expect(store.send(:find_session, double('env'), fake_key)).to eq([fake_key, {}])
-        end
-      end
-    end
-
-    context 'when redis is down' do
-      before do
-        allow(store).to receive(:redis).and_raise(Redis::CannotConnectError)
-        allow(store).to receive(:generate_sid).and_return('foop')
-      end
-
-      it 'returns an empty session hash' do
-        expect(store.send(:find_session, double('env'), fake_key).last)
-          .to eq({})
-      end
-
-      it 'returns a newly generated sid' do
-        expect(store.send(:find_session, double('env'), fake_key).first)
-          .to eq('foop')
-      end
-
-      context 'when :on_redis_down re-raises' do
-        before { store.on_redis_down = ->(e, *) { raise e } }
-
-        it 'explodes' do
-          expect do
-            store.send(:find_session, double('env'), fake_key)
-          end.to raise_error(Redis::CannotConnectError)
-        end
-      end
-    end
-  end
-
-  describe 'destroying a session' do
-    context 'when the key is in the cookie hash' do
-      let(:request) { Rack::Request.new({ 'rack.request.cookie_hash' => cookie_hash }) }
-      let(:cookie_hash) { double('cookie hash') }
-      let(:fake_key) { 'thisisarediskey' }
-
-      before do
-        allow(cookie_hash).to receive(:[]).and_return(fake_key)
-      end
-
-      it 'deletes the prefixed key from redis' do
-        redis = double('redis')
-        allow(store).to receive(:redis).and_return(redis)
-        expect(redis).to receive(:del)
-          .with("#{options[:key_prefix]}#{fake_key}")
-
-        store.send(:destroy, request)
-      end
-
-      context 'when no cookie hash in request' do
-        let(:request) { Rack::Request.new({}) }
-
-        it 'does nothing' do
-          allow(store).to receive(:redis).and_return(double('redis'))
-          store.send(:destroy, request)
-        end
-      end
-
-      context 'when redis is down' do
-        before do
-          allow(store).to receive(:redis).and_raise(Redis::CannotConnectError)
-        end
-
-        it 'returns false' do
-          expect(store.send(:destroy, request)).to eq(false)
-        end
-
-        context 'when :on_redis_down re-raises' do
-          before { store.on_redis_down = ->(e, *) { raise e } }
-
-          it 'explodes' do
-            expect do
-              store.send(:destroy, request)
-            end.to raise_error(Redis::CannotConnectError)
-          end
-        end
-      end
-    end
-
-    context 'when destroyed via #delete_session' do
-      it 'deletes the prefixed key from redis' do
-        redis = double('redis', setnx: true)
-        allow(store).to receive(:redis).and_return(redis)
-        sid = store.send(:generate_sid, double('request'))
-        expect(redis).to receive(:del).with("#{options[:key_prefix]}#{sid}")
-
-        store.send(:delete_session, {}, sid, nil)
-      end
-    end
-  end
-
-  describe 'session encoding' do
-    let(:env)          { double('env') }
-    let(:session_id)   { 12_345 }
-    let(:session_data) { { 'some' => 'data' } }
-    let(:options)      { {} }
-    let(:encoded_data) { Marshal.dump(session_data) }
-    let(:redis)        { double('redis', set: nil, get: encoded_data) }
-    let(:expected_encoding) { encoded_data }
-
-    before do
-      allow(store).to receive(:redis).and_return(redis)
-    end
-
-    shared_examples_for 'serializer' do
-      it 'encodes correctly' do
-        expect(redis).to receive(:set).with('12345', expected_encoding)
-        store.send(:write_session, env, session_id, session_data, options)
-      end
-
-      it 'decodes correctly' do
-        expect(store.send(:find_session, env, session_id))
-          .to eq([session_id, session_data])
-      end
-    end
-
-    context 'marshal' do
-      let(:options) { { serializer: :marshal } }
-
-      it_behaves_like 'serializer'
-    end
-
-    context 'json' do
-      let(:options) { { serializer: :json } }
-      let(:encoded_data) { '{"some":"data"}' }
-
-      it_behaves_like 'serializer'
-    end
-
-    context 'hybrid' do
-      let(:options) { { serializer: :hybrid } }
-      let(:expected_encoding) { '{"some":"data"}' }
-
-      context 'marshal encoded data' do
-        it_behaves_like 'serializer'
-      end
-
-      context 'json encoded data' do
-        let(:encoded_data) { '{"some":"data"}' }
-
-        it_behaves_like 'serializer'
-      end
-    end
-
-    context 'custom' do
-      let :custom_serializer do
-        Class.new do
-          def self.load(_value)
-            { 'some' => 'data' }
-          end
-
-          def self.dump(_value)
-            'somedata'
-          end
-        end
-      end
-
-      let(:options) { { serializer: custom_serializer } }
-      let(:expected_encoding) { 'somedata' }
-
-      it_behaves_like 'serializer'
-    end
-  end
-
-  describe 'handling decode errors' do
-    context 'when a class is serialized that does not exist' do
-      before do
-        allow(store).to receive(:redis)
-          .and_return(double('redis',
-                             get: "\x04\bo:\nNonExistentClass\x00",
-                             del: true))
-      end
-
-      it 'returns an empty session' do
-        expect(store.send(:load_session_from_redis, 'whatever')).to be_nil
-      end
-
-      it 'destroys and drops the session' do
-        expect(store).to receive(:destroy_session_from_sid)
-          .with('wut', drop: true)
-        store.send(:load_session_from_redis, 'wut')
-      end
-
-      context 'when a custom on_session_load_error handler is provided' do
-        before do
-          store.on_session_load_error = lambda do |e, sid|
-            @e = e
-            @sid = sid
-          end
-        end
-
-        it 'passes the error and the sid to the handler' do
-          store.send(:load_session_from_redis, 'foo')
-          expect(@e).to be_kind_of(StandardError)
-          expect(@sid).to eq('foo')
-        end
-      end
-    end
-
-    context 'when the encoded data is invalid' do
-      before do
-        allow(store).to receive(:redis)
-          .and_return(double('redis', get: "\x00\x00\x00\x00", del: true))
-      end
-
-      it 'returns an empty session' do
-        expect(store.send(:load_session_from_redis, 'bar')).to be_nil
-      end
-
-      it 'destroys and drops the session' do
-        expect(store).to receive(:destroy_session_from_sid)
-          .with('wut', drop: true)
-        store.send(:load_session_from_redis, 'wut')
-      end
-
-      context 'when a custom on_session_load_error handler is provided' do
-        before do
-          store.on_session_load_error = lambda do |e, sid|
-            @e = e
-            @sid = sid
-          end
-        end
-
-        it 'passes the error and the sid to the handler' do
-          store.send(:load_session_from_redis, 'foo')
-          expect(@e).to be_kind_of(StandardError)
-          expect(@sid).to eq('foo')
-        end
-      end
-    end
-  end
-
   describe 'validating custom handlers' do
     %w(on_redis_down on_session_load_error).each do |h|
       context 'when nil' do
@@ -533,24 +177,350 @@ describe RedisSessionStore do
     end
   end
 
-  describe 'setting the session' do
-    subject(:write_session) { ->(data:) { store.send(:write_session, request, sid, data) } }
+  describe 'behavior' do
+    let(:redis) { double('redis') }
 
-    let(:sid) { 1234 }
-    let(:request) { Rack::Request.new({ 'rack.session.options' => {} }) }
+    before { allow(store).to receive(:redis).with(anything).and_return(redis) }
 
-    before { allow(store).to receive(:redis).and_return(Redis.new) }
+    describe 'checking for session existence' do
+      let(:session_id) { 'foo' }
 
-    it 'allows changing the session' do
-      write_session[data: { 'foo' => 'bar' }]
-      data2 = { 'baz' => 'wat' }
-      write_session[data: data2]
-      _, session = store.send(:find_session, request, sid)
-      expect(session).to eq(data2)
+      before do
+        allow(store).to receive(:current_session_id)
+          .with(:env).and_return(session_id)
+      end
+
+      context 'when session id is not provided' do
+        context 'when session id is nil' do
+          let(:session_id) { nil }
+
+          it 'returns false' do
+            expect(store.send(:session_exists?, :env)).to eq(false)
+          end
+        end
+
+        context 'when session id is empty string' do
+          let(:session_id) { '' }
+
+          it 'returns false' do
+            allow(store).to receive(:current_session_id).with(:env).and_return('')
+            expect(store.send(:session_exists?, :env)).to eq(false)
+          end
+        end
+      end
+
+      context 'when session id is provided' do
+        context 'when session id does not exist in redis' do
+          it 'returns false' do
+            expect(redis).to receive(:exists?).with('foo').and_return(false)
+            expect(store.send(:session_exists?, :env)).to eq(false)
+          end
+        end
+
+        context 'when session id exists in redis' do
+          it 'returns true' do
+            expect(redis).to receive(:exists?).with('foo').and_return(true)
+            expect(store.send(:session_exists?, :env)).to eq(true)
+          end
+        end
+
+        context 'when redis is down' do
+          before do
+            allow(redis).to receive(:exists?).and_raise(Redis::CannotConnectError)
+          end
+
+          it 'returns true (fallback to old behavior)' do
+            expect(store.send(:session_exists?, :env)).to eq(true)
+          end
+
+          it 'explodes when :on_redis_down re-raises' do
+            store.on_redis_down = ->(e, *) { raise e }
+            expect do
+              store.send(:session_exists?, :env)
+            end.to raise_error(Redis::CannotConnectError)
+          end
+        end
+      end
     end
 
-    context 'when the session has an expiry' do
-      let(:request) { Rack::Request.new({ 'rack.session.options' => { expire_after: 60 } }) }
+    describe 'fetching a session' do
+      let :options do
+        {
+          key_prefix: 'customprefix::'
+        }
+      end
+
+      let(:fake_key) { 'thisisarediskey' }
+
+      describe 'generate_sid' do
+        it 'generates a secure ID' do
+          sid = store.send(:generate_sid, double('request'))
+          expect(sid).to be_a(Rack::Session::SessionId)
+        end
+      end
+
+      it 'retrieves the prefixed key from redis' do
+        allow(store).to receive(:generate_sid).and_return(fake_key)
+        expect(redis).to receive(:get).with("#{options[:key_prefix]}#{fake_key}")
+
+        store.send(:find_session, double('env'), fake_key)
+      end
+
+      it 'generates new session when no sid' do
+        expect(store).to receive(:generate_sid).and_return(fake_key)
+        expect(store.send(:find_session, double('env'), nil)).to eq([fake_key, {}])
+      end
+
+      context 'when value missing in redis' do
+        before do
+          allow(redis).to receive(:get).with("#{options[:key_prefix]}#{fake_key}").and_return(nil)
+        end
+
+        it 'generates new sid' do
+          new_sid = Rack::Session::SessionId.new('new-sid')
+          expect(store).to receive(:generate_sid).and_return(new_sid)
+          expect(store.send(:find_session, double('env'), fake_key)).to eq([new_sid, {}])
+        end
+
+        context 'and keep_sid is set' do
+          let(:options) { super().merge(keep_sid: true) }
+
+          it 'uses old sid with new session' do
+            allow(redis).to receive(:get).with("#{options[:key_prefix]}#{fake_key}")
+            expect(store).not_to receive(:generate_sid)
+            expect(store.send(:find_session, double('env'), fake_key)).to eq([fake_key, {}])
+          end
+        end
+      end
+
+      context 'when redis is down' do
+        before do
+          allow(redis).to receive(:get).and_raise(Redis::CannotConnectError)
+          allow(store).to receive(:generate_sid).and_return('foop')
+        end
+
+        it 'returns an empty session hash' do
+          expect(store.send(:find_session, double('env'), fake_key).last)
+            .to eq({})
+        end
+
+        it 'returns a newly generated sid' do
+          expect(store.send(:find_session, double('env'), fake_key).first)
+            .to eq('foop')
+        end
+
+        context 'when :on_redis_down re-raises' do
+          before { store.on_redis_down = ->(e, *) { raise e } }
+
+          it 'explodes' do
+            expect do
+              store.send(:find_session, double('env'), fake_key)
+            end.to raise_error(Redis::CannotConnectError)
+          end
+        end
+      end
+    end
+
+    describe 'destroying a session' do
+      context 'when the key is in the cookie hash' do
+        let(:request) { Rack::Request.new({ 'rack.request.cookie_hash' => cookie_hash }) }
+        let(:cookie_hash) { double('cookie hash') }
+        let(:fake_key) { 'thisisarediskey' }
+
+        before do
+          allow(cookie_hash).to receive(:[]).and_return(fake_key)
+        end
+
+        it 'deletes the prefixed key from redis' do
+          expect(redis).to receive(:del)
+            .with("#{options[:key_prefix]}#{fake_key}")
+
+          store.send(:destroy, request)
+        end
+
+        context 'when no cookie hash in request' do
+          let(:request) { Rack::Request.new({}) }
+
+          it 'does nothing' do
+            store.send(:destroy, request)
+          end
+        end
+
+        context 'when redis is down' do
+          before do
+            allow(redis).to receive(:del).and_raise(Redis::CannotConnectError)
+          end
+
+          it 'returns false' do
+            expect(store.send(:destroy, request)).to eq(false)
+          end
+
+          it 'explodes when :on_redis_down re-raises' do
+            store.on_redis_down = ->(e, *) { raise e }
+            expect do
+              store.send(:destroy, request)
+            end.to raise_error(Redis::CannotConnectError)
+          end
+        end
+      end
+
+      context 'when destroyed via #delete_session' do
+        let(:redis) { double('redis', setnx: true) }
+
+        it 'deletes the prefixed key from redis' do
+          sid = store.send(:generate_sid, double('request'))
+          expect(redis).to receive(:del).with("#{options[:key_prefix]}#{sid}")
+
+          store.send(:delete_session, {}, sid, nil)
+        end
+      end
+    end
+
+    describe 'session encoding' do
+      let(:env)          { double('env') }
+      let(:session_id)   { 12_345 }
+      let(:session_data) { { 'some' => 'data' } }
+      let(:options)      { {} }
+      let(:encoded_data) { Marshal.dump(session_data) }
+      let(:redis)        { double('redis', set: nil, get: encoded_data) }
+      let(:expected_encoding) { encoded_data }
+
+      shared_examples_for 'serializer' do
+        it 'encodes correctly' do
+          expect(redis).to receive(:set).with('12345', expected_encoding)
+          store.send(:write_session, env, session_id, session_data, options)
+        end
+
+        it 'decodes correctly' do
+          expect(store.send(:find_session, env, session_id))
+            .to eq([session_id, session_data])
+        end
+      end
+
+      context 'marshal' do
+        let(:options) { { serializer: :marshal } }
+
+        it_behaves_like 'serializer'
+      end
+
+      context 'json' do
+        let(:options) { { serializer: :json } }
+        let(:encoded_data) { '{"some":"data"}' }
+
+        it_behaves_like 'serializer'
+      end
+
+      context 'hybrid' do
+        let(:options) { { serializer: :hybrid } }
+        let(:expected_encoding) { '{"some":"data"}' }
+
+        context 'marshal encoded data' do
+          it_behaves_like 'serializer'
+        end
+
+        context 'json encoded data' do
+          let(:encoded_data) { '{"some":"data"}' }
+
+          it_behaves_like 'serializer'
+        end
+      end
+
+      context 'custom' do
+        let :custom_serializer do
+          Class.new do
+            def self.load(_value)
+              { 'some' => 'data' }
+            end
+
+            def self.dump(_value)
+              'somedata'
+            end
+          end
+        end
+
+        let(:options) { { serializer: custom_serializer } }
+        let(:expected_encoding) { 'somedata' }
+
+        it_behaves_like 'serializer'
+      end
+    end
+
+    describe 'handling decode errors' do
+      subject(:load_session_from_redis) do
+        ->(sid) { store.send(:load_session_from_redis, request, sid) }
+      end
+
+      let(:request) { double('request') }
+
+      context 'when a class is serialized that does not exist' do
+        let(:redis) do
+          double('redis',
+                 get: "\x04\bo:\nNonExistentClass\x00",
+                 del: true)
+        end
+
+        it 'returns an empty session' do
+          expect(load_session_from_redis['whatever']).to be_nil
+        end
+
+        it 'destroys and drops the session' do
+          expect(store).to receive(:destroy_session_from_sid)
+            .with('wut', drop: true, request: request)
+          load_session_from_redis['wut']
+        end
+
+        context 'when a custom on_session_load_error handler is provided' do
+          before do
+            store.on_session_load_error = lambda do |e, sid|
+              @e = e
+              @sid = sid
+            end
+          end
+
+          it 'passes the error and the sid to the handler' do
+            load_session_from_redis['foo']
+            expect(@e).to be_kind_of(StandardError)
+            expect(@sid).to eq('foo')
+          end
+        end
+      end
+
+      context 'when the encoded data is invalid' do
+        let(:redis) { double('redis', get: "\x00\x00\x00\x00", del: true) }
+
+        it 'returns an empty session' do
+          expect(load_session_from_redis['bar']).to be_nil
+        end
+
+        it 'destroys and drops the session' do
+          expect(store).to receive(:destroy_session_from_sid)
+            .with('wut', drop: true, request: request)
+          load_session_from_redis['wut']
+        end
+
+        context 'when a custom on_session_load_error handler is provided' do
+          before do
+            store.on_session_load_error = lambda do |e, sid|
+              @e = e
+              @sid = sid
+            end
+          end
+
+          it 'passes the error and the sid to the handler' do
+            load_session_from_redis['foo']
+            expect(@e).to be_kind_of(StandardError)
+            expect(@sid).to eq('foo')
+          end
+        end
+      end
+    end
+
+    describe 'setting the session' do
+      subject(:write_session) { ->(data:) { store.send(:write_session, request, sid, data) } }
+
+      let(:sid) { 1234 }
+      let(:request) { Rack::Request.new({ 'rack.session.options' => {} }) }
+      let(:redis) { Redis.new }
 
       it 'allows changing the session' do
         write_session[data: { 'foo' => 'bar' }]
@@ -559,32 +529,45 @@ describe RedisSessionStore do
         _, session = store.send(:find_session, request, sid)
         expect(session).to eq(data2)
       end
-    end
 
-    context 'when redis is down' do
-      let(:redis_exception_type) { Redis::CannotConnectError }
+      context 'when the session has an expiry' do
+        let(:request) { Rack::Request.new({ 'rack.session.options' => { expire_after: 60 } }) }
 
-      before { allow(store).to receive(:redis).and_raise(redis_exception_type) }
-
-      it 'returns false' do
-        expect(write_session[data: { 'foo' => 'bar' }]).to eq false
+        it 'allows changing the session' do
+          write_session[data: { 'foo' => 'bar' }]
+          data2 = { 'baz' => 'wat' }
+          write_session[data: data2]
+          _, session = store.send(:find_session, request, sid)
+          expect(session).to eq(data2)
+        end
       end
 
-      it 'calls on_redis_down' do
-        store.on_redis_down = double('on_redis_down')
-        expect(store.on_redis_down).to receive(:call).with(
-          be_kind_of(redis_exception_type), request, sid
-        )
-        write_session[data: { 'foo' => 'bar' }]
-      end
+      context 'when redis is down' do
+        let(:redis) { double('redis') }
+        let(:redis_exception_type) { Redis::CannotConnectError }
 
-      context 'when :on_redis_down re-raises' do
-        before { store.on_redis_down = ->(e, *) { raise e } }
+        before { allow(redis).to receive(:set).and_raise(redis_exception_type) }
 
-        it 'explodes' do
-          expect do
-            write_session[data: { 'foo' => 'bar' }]
-          end.to raise_error(Redis::CannotConnectError)
+        it 'returns false' do
+          expect(write_session[data: { 'foo' => 'bar' }]).to eq false
+        end
+
+        it 'calls on_redis_down' do
+          store.on_redis_down = double('on_redis_down')
+          expect(store.on_redis_down).to receive(:call).with(
+            be_kind_of(redis_exception_type), request, sid
+          )
+          write_session[data: { 'foo' => 'bar' }]
+        end
+
+        context 'when :on_redis_down re-raises' do
+          before { store.on_redis_down = ->(e, *) { raise e } }
+
+          it 'explodes' do
+            expect do
+              write_session[data: { 'foo' => 'bar' }]
+            end.to raise_error(Redis::CannotConnectError)
+          end
         end
       end
     end
