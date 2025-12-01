@@ -18,7 +18,7 @@ describe RedisSessionStore do
   end
   let(:payload) do
     lambda do |_env, session|
-      expect(session.id).to be_nil
+      expect(session.id).to be_nil # rubocop:disable RSpec/ExpectInLet
       session.options[:renew] = true
     end
   end

@@ -3,7 +3,7 @@ unless defined?(Rails)
 
   module Rails
     def self.logger
-      @logger ||= Logger.new('/dev/null')
+      @logger ||= Logger.new(File::NULL)
     end
   end
 end

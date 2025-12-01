@@ -173,7 +173,7 @@ class RedisSessionStore < ActionDispatch::Session::AbstractSecureStore
     generate_sid(request)
   end
 
-  def destroy(request)
+  def destroy(request) # rubocop:disable Naming/PredicateMethod
     if (sid = request.env['rack.request.cookie_hash']&.[](key))
       delete_session_in_redis(request, sid)
     end
